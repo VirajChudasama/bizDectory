@@ -1,21 +1,22 @@
-import React, { useState, useRef } from 'react';
-import { 
-  View, Text, StyleSheet, TextInput, TouchableOpacity, ImageBackground, 
-  StatusBar, Image, Animated 
+import React, { useState, useRef, useEffect } from 'react';
+
+import {
+  View, Text, StyleSheet, TextInput, TouchableOpacity, Image,
+  StatusBar, Animated, Alert, PermissionsAndroid, Platform
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../navigation/RootNavigator'; // Importing from RootNavigator
+import { RootStackParamList } from '../navigation/RootNavigator';
+import { supabase } from '../helper/lib/supabase';
+import MapView, { PROVIDER_GOOGLE, Region } from 'react-native-maps';
+import Geolocation from '@react-native-community/geolocation';
 
 // Navigation Type
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-// Assets
-const mapImage = require('../assets/map.png');
 const pinIcon = require('../assets/pin.png');
 const threeDotsIcon = require('../assets/icons/threedots.png');
 
-// Icons
 const icons = {
   createProfile: require('../assets/icons/profile.png'),
   viewProfiles: require('../assets/icons/switch_account.png'),
@@ -26,8 +27,85 @@ const icons = {
 
 const HomeScreen = () => {
   const [isDrawerOpen, setDrawerOpen] = useState(false);
+  const [region, setRegion] = useState<Region | null>(null);
   const drawerAnimation = useRef(new Animated.Value(-250)).current;
   const navigation = useNavigation<NavigationProp>();
+
+  useEffect(() => {
+    let watchId: number;
+
+    const requestLocationPermission = async () => {
+      try {
+        if (Platform.OS === 'android') {
+          const hasPermission = await PermissionsAndroid.check(
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+          );
+
+          if (!hasPermission) {
+            const granted = await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+              {
+                title: 'Location Permission',
+                message: 'We need access to your location to show your position on the map.',
+                buttonNeutral: 'Ask Me Later',
+                buttonNegative: 'Cancel',
+                buttonPositive: 'OK',
+              }
+            );
+            if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+              Alert.alert('Permission Denied', 'Location permission is required to use the map feature.');
+              return;
+            }
+          }
+        }
+
+        console.log("Watching location...");
+
+        const options = {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 1000,
+          distanceFilter: 0, // update on any change
+        };
+
+        watchId = Geolocation.watchPosition(
+          (pos) => {
+            const crd = pos.coords;
+            console.log("Your current position is:");
+            console.log(`Latitude : ${crd.latitude}`);
+            console.log(`Longitude: ${crd.longitude}`);
+            console.log(`Accuracy : ${crd.accuracy} meters.`);
+
+            setRegion({
+              latitude: crd.latitude,
+              longitude: crd.longitude,
+              latitudeDelta: 0.01,
+              longitudeDelta: 0.01,
+            });
+
+            // Stop watching after one update if you only want to fetch once
+            Geolocation.clearWatch(watchId);
+          },
+          (err) => {
+            console.warn(`ERROR(${err.code}): ${err.message}`);
+            Alert.alert('Error', err.message || 'Failed to get current location. Make sure location is enabled.');
+          },
+          options
+        );
+      } catch (err) {
+        console.warn('Location permission error:', err);
+      }
+    };
+
+    requestLocationPermission();
+
+    return () => {
+      if (watchId !== null) {
+        Geolocation.clearWatch(watchId);
+      }
+    };
+  }, []);
+
 
   const toggleDrawer = () => {
     if (isDrawerOpen) {
@@ -46,47 +124,63 @@ const HomeScreen = () => {
     }
   };
 
-  const handleNavigation = (screen: keyof RootStackParamList) => {
-    toggleDrawer(); 
-    navigation.navigate(screen);
+  const handleNavigation = async (screen: keyof RootStackParamList | 'Logout') => {
+    toggleDrawer();
+
+    if (screen === 'Logout') {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        Alert.alert('Logout Failed', error.message);
+        return;
+      }
+      Alert.alert('Success', 'You have been logged out.');
+      setTimeout(() => {
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'DifferentSignup' }],
+        });
+      }, 200);
+    } else {
+      navigation.navigate(screen as any);
+    }
   };
 
   return (
     <View style={styles.container}>
       <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
 
-      {/* Map Background */}
-      <ImageBackground source={mapImage} style={styles.mapBackground} resizeMode="cover">
-        {/* Top Bar: Menu, Search, Profile */}
-        <View style={styles.topBarContainer}>
-          {/* Three-Dot Menu */}
-          <TouchableOpacity onPress={toggleDrawer} style={styles.hamburgerButton}>
-            <Image source={threeDotsIcon} style={styles.threeDotsIcon} />
-          </TouchableOpacity>
+      {/* Show Map only when region is set */}
+      {region && (
+        <MapView
+          style={StyleSheet.absoluteFillObject}
+          provider={PROVIDER_GOOGLE}
+          initialRegion={region}
+          showsUserLocation
+        />
+      )}
 
-          {/* Search Box */}
-          <View style={styles.searchContainer}>
-            <TouchableOpacity style={styles.iconButton}>
-              <Image source={pinIcon} style={styles.pinIcon} resizeMode="contain" />
-            </TouchableOpacity>
-            <TextInput placeholder="Search here" placeholderTextColor="#aaa" style={styles.searchInput} />
-          </View>
-
-          {/* Profile Button */}
-          <TouchableOpacity style={styles.profileButton}>
-            <Text style={styles.profileInitial}>V</Text>
+      {/* Search Box */}
+      <View style={styles.topBarContainer}>
+        <View style={styles.searchContainer}>
+          <TouchableOpacity style={styles.iconButton}>
+            <Image source={pinIcon} style={styles.pinIcon} resizeMode="contain" />
           </TouchableOpacity>
+          <TextInput placeholder="Search here" placeholderTextColor="#aaa" style={styles.searchInput} />
         </View>
-      </ImageBackground>
+        <TouchableOpacity style={styles.profileButton}>
+          <Text style={styles.profileInitial}>V</Text>
+        </TouchableOpacity>
+      </View>
 
-      {/* Overlay when drawer is open */}
+      {/* Floating Button */}
+      <TouchableOpacity onPress={toggleDrawer} style={styles.floatingMenu}>
+        <Image source={threeDotsIcon} style={styles.threeDotsIcon} />
+      </TouchableOpacity>
+
       {isDrawerOpen && <TouchableOpacity style={styles.overlay} onPress={toggleDrawer} />}
 
-      {/* Left Side Drawer */}
       <Animated.View style={[styles.drawerContainer, { transform: [{ translateX: drawerAnimation }] }]}>
         <Text style={styles.drawerTitle}>Menu</Text>
-
-        {/* Drawer Menu Items */}
         {drawerOptions.map((item, index) => (
           <TouchableOpacity key={index} style={styles.drawerOption} onPress={() => handleNavigation(item.screen)}>
             <Image source={item.icon} style={styles.drawerIcon} />
@@ -98,34 +192,29 @@ const HomeScreen = () => {
   );
 };
 
-// Drawer menu options
-const drawerOptions: { label: string; icon: any; screen: keyof RootStackParamList }[] = [
-  { label: 'Create Profile', icon: icons.createProfile, screen: 'CreateProfile' },
+const drawerOptions: { label: string; icon: any; screen: keyof RootStackParamList | 'Logout' }[] = [
+  { label: 'Create Profile', icon: icons.createProfile, screen: 'Profile' },
   { label: 'View Profiles', icon: icons.viewProfiles, screen: 'ViewProfiles' },
   { label: 'Map My Places', icon: icons.mapMyPlaces, screen: 'MapMyPlaces' },
-  { label: 'App Settings', icon: icons.settings, screen: 'HomeScreen' }, // Placeholder for now
-  { label: 'Logout', icon: icons.logout, screen: 'HomeScreen' }, // Placeholder for now
+  { label: 'App Settings', icon: icons.settings, screen: 'HomeScreen' },
+  { label: 'Logout', icon: icons.logout, screen: 'Logout' },
 ];
 
+
 export default HomeScreen;
+
+
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
-  },
-  mapBackground: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-    justifyContent: 'flex-start',
   },
   topBarContainer: {
     marginTop: 60,
     marginHorizontal: 20,
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
   },
   searchContainer: {
     flex: 1,
@@ -162,12 +251,22 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 16,
   },
-  hamburgerButton: {
-    padding: 12,
+  floatingMenu: {
+    position: 'absolute',
+    bottom: 30,
+    right: 20,
+    backgroundColor: '#fff',
+    padding: 14,
+    borderRadius: 30,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 2, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
   threeDotsIcon: {
-    width: 28,
-    height: 28,
+    width: 24,
+    height: 24,
     tintColor: '#000',
   },
   drawerContainer: {

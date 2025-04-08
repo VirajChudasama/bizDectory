@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "625723774287",
+    "project_id": "bizdectory-b34df",
+    "storage_bucket": "bizdectory-b34df.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:625723774287:android:14ec17f9dfc64c2b19213a",
+        "android_client_info": {
+          "package_name": "com.bizdectory"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDKxSotLVIOT4BzAvUhO80zjima1rI9_G4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

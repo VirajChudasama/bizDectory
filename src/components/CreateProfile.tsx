@@ -1,22 +1,30 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Image,
-  PermissionsAndroid,
   Alert,
+  View,
   ScrollView,
+  StyleSheet,
+  ActivityIndicator,
 } from "react-native";
+import { TextInput, Button, Avatar, Text } from "react-native-paper";
 import { launchImageLibrary } from "react-native-image-picker";
-import Geolocation from "@react-native-community/geolocation";
-import DocumentPicker from "react-native-document-picker";
-import { Picker } from "@react-native-picker/picker";
+import { supabase } from "../helper/lib/supabase";
+import { RouteProp, useRoute } from "@react-navigation/native";
 
-const CreateProfile = () => {
+type RootStackParamList = {
+  CreateProfile: { categoryId: string };
+};
+
+type CreateProfileScreenRouteProp = RouteProp<RootStackParamList, "CreateProfile">;
+
+const CreateProfile: React.FC = () => {
+  const route = useRoute<CreateProfileScreenRouteProp>();
+  const { categoryId } = route.params; // Fetching category_id
+
+  const [loading, setLoading] = useState(false);
+  const [fetchingUser, setFetchingUser] = useState(true);
   const [formData, setFormData] = useState({
+    user_id: "",
     full_name: "",
     bio: "",
     profession: "",
@@ -29,187 +37,160 @@ const CreateProfile = () => {
     facebook_url: "",
     linkedin_url: "",
     instagram_url: "",
-    lat: "",
-    long: "",
+    lat: null as number | null,
+    long: null as number | null,
+    category_id: categoryId, // Store category_id in formData
   });
 
-  const handleChange = (name: keyof typeof formData, value: string) => {
-    setFormData({ ...formData, [name]: value });
-  };
-  
+  useEffect(() => {
+    fetchUserId();
+    setStaticLocation();
+  }, []);
 
-  const pickImage = (type: "profile" | "cover") => {
-    launchImageLibrary({ mediaType: "photo", quality: 1 }, (response) => {
-      if (response.didCancel) {
-        console.log("User cancelled image picker");
-      } else if (response.errorMessage) {
-        console.log("Image picker error: ", response.errorMessage);
-      } else if (response.assets && response.assets.length > 0) {
-        setFormData({
-          ...formData,
-          [type === "profile" ? "profile_picture_url" : "cover_img_url"]: response.assets[0].uri,
-        });
-      }
-    });
-  };
-  
-
-  const getLocation = async () => {
+  const fetchUserId = async () => {
     try {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        {
-          title: "Location Permission",
-          message: "Allow access to your location?",
-          buttonPositive: "OK",
-        }
-      );
+      setFetchingUser(true);
+      console.log("Fetching user session...");
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
 
-      if (granted === PermissionsAndroid.RESULTS.GRANTED) {
-        Geolocation.getCurrentPosition(
-          (position) => {
-            setFormData({
-              ...formData,
-              lat: position.coords.latitude.toString(),
-              long: position.coords.longitude.toString(),
-            });
-          },
-          (error) => Alert.alert("Error", error.message),
-          { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
-        );
-      } else {
-        Alert.alert("Permission Denied", "Location access is required.");
+      if (!data?.session?.user) {
+        throw new Error("User session not found.");
       }
+
+      setFormData((prev) => ({ ...prev, user_id: data.session.user.id }));
     } catch (err) {
-      console.warn(err);
+      console.error("Error fetching user:", err);
+      Alert.alert("Error", "Failed to fetch user session. Please log in again.");
+    } finally {
+      setFetchingUser(false);
     }
   };
 
-  const handleSubmit = () => {
-    console.log("Profile Data Submitted:", formData);
+  const handleChange = (name: keyof typeof formData, value: string) => {
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const pickImage = async (type: "profile" | "cover") => {
+    launchImageLibrary({ mediaType: "photo", quality: 1 }, async (response) => {
+      if (response.didCancel) return;
+      if (response.errorMessage) {
+        Alert.alert("Error", response.errorMessage);
+        return;
+      }
+
+      if (!response.assets || response.assets.length === 0) {
+        Alert.alert("Error", "No image selected.");
+        return;
+      }
+
+      const selectedImage = response.assets[0].uri;
+      if (!selectedImage) {
+        Alert.alert("Error", "Failed to get image URI.");
+        return;
+      }
+
+      setFormData((prev) => ({
+        ...prev,
+        [type === "profile" ? "profile_picture_url" : "cover_img_url"]: selectedImage,
+      }));
+    });
+  };
+
+  const setStaticLocation = () => {
+    setFormData((prev) => ({
+      ...prev,
+      lat: 19.0760, // Example: Mumbai latitude
+      long: 72.8777, // Example: Mumbai longitude
+    }));
+  };
+
+  const handleSubmit = async () => {
+    if (!formData.user_id) {
+      Alert.alert("Error", "User ID is not available. Please wait.");
+      return;
+    }
+    if (!formData.full_name || !formData.email) {
+      Alert.alert("Validation Error", "Full Name and Email are required.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const cleanData = { ...formData };
+      cleanData.lat = formData.lat ?? null;
+      cleanData.long = formData.long ?? null;
+
+      console.log("Submitting profile data:", cleanData);
+
+      const { error } = await supabase.from("profiles").insert([cleanData]);
+
+      if (error) throw new Error(error.message);
+
+      Alert.alert("Success", "Profile created successfully!");
+    } catch (err) {
+      const error = err as Error;
+      console.error("Unexpected Error:", error);
+      Alert.alert("Error", `Failed to create profile: ${error.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Create Profile</Text>
-      
-      <TouchableOpacity onPress={() => pickImage("profile")} style={styles.imagePicker}>
-        {formData.profile_picture_url ? (
-          <Image source={{ uri: formData.profile_picture_url }} style={styles.image} />
-        ) : (
-          <Text style={styles.imageText}>Select Profile Picture</Text>
-        )}
-      </TouchableOpacity>
 
-      <TouchableOpacity onPress={() => pickImage("cover")} style={styles.imagePicker}>
-        {formData.cover_img_url ? (
-          <Image source={{ uri: formData.cover_img_url }} style={styles.image} />
-        ) : (
-          <Text style={styles.imageText}>Select Cover Image</Text>
-        )}
-      </TouchableOpacity>
+      {fetchingUser ? (
+        <ActivityIndicator size="large" color="#6200EE" />
+      ) : (
+        <>
+          <Text style={styles.userIdText}>User ID: {formData.user_id}</Text>
+          <Text style={styles.userIdText}>Category ID: {formData.category_id}</Text>
+        </>
+      )}
 
-      {([
-        "full_name",
-        "bio",
-        "profession",
-        "website_url",
-        "phn_no",
-        "whatsapp_no",
-        "email",
-        "facebook_url",
-        "linkedin_url",
-        "instagram_url",
-        ] as (keyof typeof formData)[]).map((field) => (
+      <Avatar.Image
+        size={100}
+        source={
+          formData.profile_picture_url
+            ? { uri: formData.profile_picture_url }
+            : require("../assets/icons/avatar.png")
+        }
+        style={styles.avatar}
+      />
+
+      <Button mode="outlined" onPress={() => pickImage("profile")}>Upload Profile Picture</Button>
+      <Button mode="outlined" onPress={() => pickImage("cover")}>Upload Cover Image</Button>
+
+      {["full_name", "email", "bio", "profession", "website_url", "phn_no", "whatsapp_no", "facebook_url", "linkedin_url", "instagram_url"].map((field) => (
         <TextInput
-            key={field}
-            placeholder={field.replace("_", " ").toUpperCase()}
-            value={formData[field]} // Now TypeScript understands field is a valid key
-            onChangeText={(value) => handleChange(field, value)}
-            style={styles.input}
+          key={field}
+          label={field.replace(/_/g, " ").toUpperCase()}
+          value={formData[field as keyof typeof formData] as string}
+          onChangeText={(value) => handleChange(field as keyof typeof formData, value)}
+          style={styles.input}
+          mode="outlined"
         />
-    ))}
+      ))}
 
+      <Button mode="contained" onPress={setStaticLocation} style={styles.locationButton}>Set Static Location</Button>
+      <Text style={styles.locationText}>Latitude: {formData.lat ?? "Fetching..."} | Longitude: {formData.long ?? "Fetching..."}</Text>
 
-      <TouchableOpacity onPress={getLocation} style={styles.locationButton}>
-        <Text style={styles.buttonText}>Get Current Location</Text>
-      </TouchableOpacity>
-      <Text style={styles.locationText}>{`Lat: ${formData.lat}, Long: ${formData.long}`}</Text>
-
-      <TouchableOpacity onPress={handleSubmit} style={styles.submitButton}>
-        <Text style={styles.submitText}>Create Profile</Text>
-      </TouchableOpacity>
+      <Button mode="contained" onPress={handleSubmit} disabled={loading || fetchingUser} style={styles.submitButton}>{loading ? <ActivityIndicator color="#fff" /> : "Create Profile"}</Button>
     </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    backgroundColor: "#f4f4f4",
-    flexGrow: 1,
-    alignItems: "center",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 20,
-  },
-  imagePicker: {
-    width: 120,
-    height: 120,
-    backgroundColor: "#ddd",
-    justifyContent: "center",
-    alignItems: "center",
-    borderRadius: 60,
-    marginBottom: 15,
-  },
-  image: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 60,
-  },
-  imageText: {
-    color: "#555",
-    fontSize: 12,
-  },
-  input: {
-    width: "100%",
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 10,
-    marginBottom: 10,
-    backgroundColor: "#fff",
-  },
-  locationButton: {
-    padding: 12,
-    backgroundColor: "#007bff",
-    borderRadius: 10,
-    marginBottom: 10,
-  },
-  buttonText: {
-    color: "#fff",
-    fontWeight: "bold",
-  },
-  locationText: {
-    fontSize: 14,
-    color: "#333",
-    marginBottom: 10,
-  },
-  submitButton: {
-    backgroundColor: "#28a745",
-    padding: 15,
-    borderRadius: 10,
-    alignItems: "center",
-    width: "100%",
-  },
-  submitText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
-  },
+  container: { padding: 20, backgroundColor: "#fff", flexGrow: 1, alignItems: "center" },
+  title: { fontSize: 24, fontWeight: "bold", color: "#333", marginBottom: 10 },
+  userIdText: { fontSize: 16, color: "#6200EE", marginVertical: 10 },
+  avatar: { marginBottom: 10 },
+  input: { width: "100%", marginBottom: 10 },
+  locationButton: { marginTop: 10, width: "100%" },
+  locationText: { fontSize: 14, marginVertical: 10, color: "#555" },
+  submitButton: { marginTop: 10, width: "100%" },
 });
 
 export default CreateProfile;
